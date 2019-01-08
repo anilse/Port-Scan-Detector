@@ -397,6 +397,9 @@ int main(void)
 {
 	int dev_null_fd;
 	clock_t clk_tck;
+/* ANIL - check if var/empty exists before chroot */
+	struct stat st = {0};
+/* ANIL - end */
 
 /* Initialize the packet capture interface */
 	if (in_init()) return 1;
@@ -407,6 +410,11 @@ int main(void)
 
 /* Must do these before chroot'ing */
 	tzset();
+/* ANIL - If it doesn't exist create SCANLOGD_DIR*/
+	if (stat(SCANLOGD_CHROOT, &st) == -1) {
+    		mkdir(SCANLOGD_CHROOT, 0700);
+	}
+/* ANIL - End */
 	openlog(SYSLOG_IDENT, LOG_NDELAY, SYSLOG_FACILITY);
 	dev_null_fd = open("/dev/null", O_RDONLY);
 
