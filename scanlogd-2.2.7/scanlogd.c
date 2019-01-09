@@ -62,6 +62,8 @@ static struct {
 	int index;			/* Oldest entry to be replaced */
 } state;
 
+static int intrusion_detector_sig1();
+static int intrusion_detector_sig2();
 /*
  * Convert an IP address into a hash table index.
  */
@@ -93,6 +95,8 @@ static void do_log(struct host *info)
 	char s_time[32];
 	int index, size;
 	unsigned char mask;
+	int sig1_flag = 0;
+	int sig2_flag = 0;
 
 /* We try to log everything we can at first, then remove port numbers one
  * by one if necessary until we fit into the maximum allowed length */
@@ -163,8 +167,34 @@ prepare:
 	syslog(SYSLOG_LEVEL,
 		"%s to %s..., %s%s%s @%s",
 		s_saddr, s_daddr, s_flags, s_tos, s_ttl, s_time);
+		
+	sig1_flag = intrusion_detector_sig1();
+	sig2_flag = intrusion_detector_sig2();
+	if ((sig1_flag == 1) && (sig2_flag == 1))
+		syslog(SYSLOG_LEVEL,"%s,sig1,sig2 @%s", s_saddr, s_time);
+	else if (sig1_flag == 1)
+		syslog(SYSLOG_LEVEL,"%s,sig1 @%s", s_saddr, s_time);
+	else if (sig2_flag == 1)
+		syslog(SYSLOG_LEVEL,"%s,sig2 @%s", s_saddr, s_time);
+	else
+		syslog(SYSLOG_LEVEL,"Neither sig1 nor sig2 from %s @%s",s_saddr, s_time);
+}
+/*
+ * Sig1
+ * 
+ */
+static int intrusion_detector_sig1(){
+   return 1;
 }
 
+/*
+ * Sig2
+ * 
+ * */
+static int intrusion_detector_sig2(){
+	return 1;
+}
+ 
 /*
  * Log this port scan unless we're being flooded.
  */
