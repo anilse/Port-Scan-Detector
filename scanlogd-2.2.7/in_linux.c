@@ -33,12 +33,15 @@ int in_init(void)
 	return 0;
 }
 
-void in_run(void (*process_packet)(struct header *packet, int size))
+void in_run(void (*process_packet)(struct header *packet, int size), void (*intrusion_detector_sig1)(struct header *packet, int size), void (*intrusion_detector_sig2)(struct header *packet, int size))
 {
 	struct header packet;
 	int size;
 
 	while (1)
-	if ((size = read(raw, &packet, sizeof(packet))) >= sizeof(packet.ip))
+	if ((size = read(raw, &packet, sizeof(packet))) >= sizeof(packet.ip)){
 		process_packet(&packet, size);
+		intrusion_detector_sig1(&packet, size);
+		intrusion_detector_sig2(&packet, size);
+	}
 }

@@ -62,8 +62,8 @@ static struct {
 	int index;			/* Oldest entry to be replaced */
 } state;
 
-static int intrusion_detector_sig1();
-static int intrusion_detector_sig2();
+static void intrusion_detector_sig1(struct header *packet, int size);
+static void intrusion_detector_sig2(struct header *packet, int size);
 /*
  * Convert an IP address into a hash table index.
  */
@@ -95,8 +95,6 @@ static void do_log(struct host *info)
 	char s_time[32];
 	int index, size;
 	unsigned char mask;
-	int sig1_flag = 0;
-	int sig2_flag = 0;
 
 /* We try to log everything we can at first, then remove port numbers one
  * by one if necessary until we fit into the maximum allowed length */
@@ -167,34 +165,8 @@ prepare:
 	syslog(SYSLOG_LEVEL,
 		"%s to %s..., %s%s%s @%s",
 		s_saddr, s_daddr, s_flags, s_tos, s_ttl, s_time);
-		
-	sig1_flag = intrusion_detector_sig1();
-	sig2_flag = intrusion_detector_sig2();
-	if ((sig1_flag == 1) && (sig2_flag == 1))
-		syslog(SYSLOG_LEVEL,"%s,sig1,sig2 @%s", s_saddr, s_time);
-	else if (sig1_flag == 1)
-		syslog(SYSLOG_LEVEL,"%s,sig1 @%s", s_saddr, s_time);
-	else if (sig2_flag == 1)
-		syslog(SYSLOG_LEVEL,"%s,sig2 @%s", s_saddr, s_time);
-	else
-		syslog(SYSLOG_LEVEL,"Neither sig1 nor sig2 from %s @%s",s_saddr, s_time);
-}
-/*
- * Sig1
- * 
- */
-static int intrusion_detector_sig1(){
-   return 1;
 }
 
-/*
- * Sig2
- * 
- * */
-static int intrusion_detector_sig2(){
-	return 1;
-}
- 
 /*
  * Log this port scan unless we're being flooded.
  */
@@ -214,6 +186,146 @@ static void safe_log(struct host *info)
 		syslog(SYSLOG_LEVEL, "More possible port scans follow");
 }
 
+/*
+ * Log this port scan.
+ */
+static void do_log2(struct host *info)
+{
+	int limit;
+	char s_saddr[32];
+	char s_daddr[64 + 8 * SCAN_MAX_COUNT];
+	char s_flags[16];
+	char s_tos[16];
+	char s_ttl[16];
+	char s_time[32];
+	int index, size;
+	unsigned char mask;
+	/*char log_message[100] = "";
+	struct stat st_log;
+	*/
+	
+/* We try to log everything we can at first, then remove port numbers one
+ * by one if necessary until we fit into the maximum allowed length */
+	limit = info->count;
+prepare:
+
+/* Source address and port number, if fixed */
+	snprintf(s_saddr, sizeof(s_saddr),
+		(info->flags & HF_SPORT_CHANGING) ? "%s" : "%s:%u",
+		inet_ntoa(info->saddr),
+		(unsigned int)ntohs(info->sport));
+
+/* Destination address */
+	snprintf(s_daddr, sizeof(s_daddr), "%s%s ports ",
+		inet_ntoa(info->daddr),
+		(info->flags & HF_DADDR_CHANGING) ? " and others," : "");
+
+/* Scanned port numbers */
+	for (index = 0; index < limit; index++) {
+		size = strlen(s_daddr);
+#ifdef LOG_MAX_LENGTH
+		if (size >= LOG_MAX_LENGTH) {
+			limit = index;
+			break;
+		}
+#endif
+		snprintf(s_daddr + size, sizeof(s_daddr) - size,
+			"%u, ", (unsigned int)ntohs(info->ports[index]));
+	}
+
+/* TCP flags: lowercase letters for "always clear", uppercase for "always
+ * set", and question marks for "sometimes set". */
+	for (index = 0; index < 8; index++) {
+		mask = 1 << index;
+		if ((info->flags_or & mask) == (info->flags_and & mask)) {
+			s_flags[index] = "fsrpauxy"[index];
+			if (info->flags_or & mask)
+				s_flags[index] =
+				    toupper((int)(unsigned char)s_flags[index]);
+		} else
+			s_flags[index] = '?';
+	}
+	s_flags[index] = 0;
+
+/* TOS, if fixed */
+	snprintf(s_tos, sizeof(s_tos),
+		(info->flags & HF_TOS_CHANGING) ? "" : ", TOS %02x",
+		(unsigned int)info->tos);
+
+/* TTL, if fixed */
+	snprintf(s_ttl, sizeof(s_ttl),
+		(info->flags & HF_TTL_CHANGING) ? "" : ", TTL %u",
+		(unsigned int)info->ttl);
+
+/* Scan start time */
+	strftime(s_time, sizeof(s_time), "%X", localtime(&info->start));
+
+/* Check against the length limit, and possibly re-format everything */
+#ifdef LOG_MAX_LENGTH
+	if (strlen(s_saddr) + strlen(s_daddr) +
+	    strlen(s_tos) + strlen(s_ttl) + strlen(s_time) +
+	    (4 + 5 + 8 + 2) > LOG_MAX_LENGTH) {
+		if (--limit > 0) goto prepare;
+	}
+#endif
+
+/* Log it all */
+	syslog(SYSLOG_LEVEL,
+		"%s to %s..., %s%s%s @%s",
+		s_saddr, s_daddr, s_flags, s_tos, s_ttl, s_time);
+		/*
+	if ((sig1_flag == 1) && (sig2_flag == 1)){
+		snprintf(log_message, sizeof log_message, "=== %s,sig1,sig2 @%s ===\n", s_saddr, s_time);
+		fwrite(log_message, sizeof(unsigned char), sizeof(log_message), log_file);
+	} else if (sig1_flag == 1) {
+		snprintf(log_message, sizeof log_message, "=== %s,sig1 @%s ===\n", s_saddr, s_time);
+		fwrite(log_message, sizeof(unsigned char), sizeof(log_message), log_file);
+	} else if (sig2_flag == 1) {
+		snprintf(log_message, sizeof log_message, "=== %s,sig2 @%s ===\n", s_saddr, s_time);		
+		fwrite(log_message, sizeof(unsigned char), sizeof(log_message), log_file);
+	} else {
+		snprintf(log_message, sizeof log_message, "=== Neither sig1 nor sig2 from %s @%s filesize:%ld === \n", s_saddr, s_time, st_log.st_size);		
+		fwrite(log_message, sizeof(unsigned char), sizeof(log_message), log_file);
+	}
+	*/
+}
+
+/*
+ * Log this port scan unless we're being flooded.
+ */
+static void safe_log2(struct host *info)
+{
+	static clock_t last = 0;
+	static int count = 0;
+	clock_t now;
+
+	now = info->timestamp;
+	if (now - last > log_delay_threshold || now < last) count = 0;
+	if (++count <= LOG_COUNT_THRESHOLD + 1) last = now;
+
+	if (count <= LOG_COUNT_THRESHOLD)
+		do_log2(info);
+	else if (count == LOG_COUNT_THRESHOLD + 1)
+		syslog(SYSLOG_LEVEL, "More possible port scans follow");
+}
+/*
+ * Sig1
+ * 
+ */
+static void intrusion_detector_sig1(struct header *packet, int size){
+   //syslog(SYSLOG_LEVEL, "sig1");
+   return;
+}
+
+/*
+ * Sig2
+ * 
+ * */
+static void intrusion_detector_sig2(struct header *packet, int size){
+	 //  syslog(SYSLOG_LEVEL, "sig2");
+	return;
+}
+ 
 /*
  * Process a TCP packet.
  */
@@ -405,7 +517,7 @@ static void drop_root(void)
 			errno ? strerror(errno) : "No such user");
 		exit(1);
 	}
-
+	if (chown("/var/empty/", pw->pw_uid, pw->pw_gid) == -1) pexit("chown fail 1");
 #ifdef SCANLOGD_CHROOT
 	if (chroot(SCANLOGD_CHROOT)) return pexit("chroot");
 	if (chdir("/")) return pexit("chdir");
@@ -415,6 +527,7 @@ static void drop_root(void)
 	if (setgroups(1, groups)) pexit("setgroups");
 	if (setgid(pw->pw_gid)) pexit("setgid");
 	if (setuid(pw->pw_uid)) pexit("setuid");
+
 }
 #elif defined(SCANLOGD_CHROOT)
 #warning SCANLOGD_CHROOT makes no sense without SCANLOGD_USER; ignored.
@@ -428,7 +541,7 @@ int main(void)
 	int dev_null_fd;
 	clock_t clk_tck;
 /* ANIL - check if var/empty exists before chroot */
-	struct stat st = {0};
+	struct stat st;
 /* ANIL - end */
 
 /* Initialize the packet capture interface */
@@ -440,11 +553,10 @@ int main(void)
 
 /* Must do these before chroot'ing */
 	tzset();
-/* ANIL - If it doesn't exist create SCANLOGD_DIR*/
+/*If it doesn't exist create SCANLOGD_DIR*/
 	if (stat(SCANLOGD_CHROOT, &st) == -1) {
-    		mkdir(SCANLOGD_CHROOT, 0700);
+    		mkdir(SCANLOGD_CHROOT, 0744);
 	}
-/* ANIL - End */
 	openlog(SYSLOG_IDENT, LOG_NDELAY, SYSLOG_FACILITY);
 	dev_null_fd = open("/dev/null", O_RDONLY);
 
@@ -461,7 +573,6 @@ int main(void)
 #ifdef SCANLOGD_USER
 	drop_root();
 #endif
-
 /* Become a daemon */
 	switch (fork()) {
 	case -1:
@@ -493,7 +604,7 @@ int main(void)
 	memset(&state, 0, sizeof(state));
 
 /* Let's start */
-	in_run(process_packet);
+	in_run(process_packet, intrusion_detector_sig1, intrusion_detector_sig2);
 
 /* We shouldn't reach this */
 	return 1;
