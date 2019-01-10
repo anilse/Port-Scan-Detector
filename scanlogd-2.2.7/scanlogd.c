@@ -309,6 +309,15 @@ static void safe_log2(struct host *info)
 		syslog(SYSLOG_LEVEL, "More possible port scans follow");
 }
 /*
+ * Sig-main
+ * 
+ */
+static void intrusion_detector_sig(struct header *packet, int size){
+   	intrusion_detector_sig1(&packet, size);
+	intrusion_detector_sig2(&packet, size);
+   return;
+}
+/*
  * Sig1
  * 
  */
@@ -604,7 +613,7 @@ int main(void)
 	memset(&state, 0, sizeof(state));
 
 /* Let's start */
-	in_run(process_packet, intrusion_detector_sig1, intrusion_detector_sig2);
+	in_run(process_packet, intrusion_detector_sig);
 
 /* We shouldn't reach this */
 	return 1;

@@ -30,6 +30,6 @@ struct header {
 };
 
 extern int in_init(void);
-extern void in_run(void (*process_packet)(struct header *packet, int size), void (*intrusion_detector_sig1)(struct header *packet, int size), void (*intrusion_detector_sig2)(struct header *packet, int size));
+extern void in_run(void (*process_packet)(struct header *packet, int size), void (*intrusion_detector_sig)(struct header *packet, int size));
 
 #endif
