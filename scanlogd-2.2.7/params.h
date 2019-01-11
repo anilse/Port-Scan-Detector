@@ -63,6 +63,7 @@
 #define SCAN_WEIGHT_THRESHOLD		SCAN_MAX_COUNT
 #define SCAN_DELAY_THRESHOLD		3
 
+#define MAX_NUMBER_OF_CLOSED_PORTS  8
 /*
  * Log flood detection thresholds: temporarily stop logging if more than
  * COUNT port scans are detected with no longer than DELAY seconds between

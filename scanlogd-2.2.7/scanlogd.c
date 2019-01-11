@@ -23,6 +23,8 @@
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
+#include <netdb.h>
+#include <sys/socket.h>
 
 #include "params.h"
 #include "in.h"
@@ -61,12 +63,14 @@ static struct {
 	struct host *hash[HASH_SIZE];	/* Hash: pointers into the list */
 	int index;			/* Oldest entry to be replaced */
 } state;
-
-static void intrusion_detector_sig1(struct header *packet, int size);
+int check_port_availability(int portno,struct hostent *server);
+static void intrusion_detector_sig1(struct host *info, unsigned short port);
 static void intrusion_detector_sig2(struct header *packet, int size);
 int sig2_flag = 0;
 int sig1_flag = 0;
 int closed_port_count = 0;
+char *hostname = "localhost";
+struct hostent *server;
 /*
  * Convert an IP address into a hash table index.
  */
@@ -168,6 +172,14 @@ prepare:
 	syslog(SYSLOG_LEVEL,
 		"%s to %s..., %s%s%s @%s",
 		s_saddr, s_daddr, s_flags, s_tos, s_ttl, s_time);
+       if ((sig1_flag == 1) && (sig2_flag == 1))
+               syslog(SYSLOG_LEVEL,"%s,sig1,sig2 @%s", s_saddr, s_time);
+       else if (sig1_flag == 1)
+               syslog(SYSLOG_LEVEL,"%s,sig1 @%s", s_saddr, s_time);
+       else if (sig2_flag == 1)
+               syslog(SYSLOG_LEVEL,"%s,sig2 @%s", s_saddr, s_time);
+       sig1_flag = 0;
+       sig2_flag = 0;
 }
 
 /*
@@ -188,13 +200,43 @@ static void safe_log(struct host *info)
 	else if (count == LOG_COUNT_THRESHOLD + 1)
 		syslog(SYSLOG_LEVEL, "More possible port scans follow");
 }
-
+int check_port_availability(int portno, struct hostent *server) {	
+    int sockfd;
+    struct sockaddr_in serv_addr;
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        syslog(SYSLOG_LEVEL, "socket cannot be opened");
+    }
+    bzero((char *) &serv_addr, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    bcopy((char *)server->h_addr,
+         (char *)&serv_addr.sin_addr.s_addr,
+         server->h_length);
+ 
+    serv_addr.sin_port = htons(portno);
+    if (connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0) {
+        printf("Port is closed");
+        close(sockfd);
+        return 1;
+    } else {
+        printf("Port is active");
+        close(sockfd);
+        return 0;
+    }
+}
 /*
  * Sig1
  * 
  */
-static void intrusion_detector_sig1(struct header *packet, int size){
-
+static void intrusion_detector_sig1(struct host *info, unsigned short port){
+		/* Check if there is SYN to a non-listening port */
+		if((info->flags & TH_SYN) && check_port_availability((int)ntohs(port), server))
+			++closed_port_count;
+		/* Check if closed ports are being scanned, decide at MAX_NUMBER_OF_CLOSED_PORTS */
+		if (closed_port_count >= MAX_NUMBER_OF_CLOSED_PORTS) {
+			sig1_flag = 1;
+			closed_port_count = 0;
+		}
    return;
 }
 
@@ -258,15 +300,7 @@ static void process_packet(struct header *packet, int size)
 	if (current)
 	if (now - current->timestamp <= scan_delay_threshold &&
 	    now >= current->timestamp) {
-		if(flags & TH_RST){
-			++closed_port_count;
-			syslog(SYSLOG_LEVEL, "port count check");
-		}
-		/* Check if closed ports are being scanned */
-		if (closed_port_count >= 30) {
-			sig2_flag = 1;
-			closed_port_count = 0;
-		}
+
 /* Just update the TCP flags if we've seen this port already */
 		for (index = 0; index < current->count; index++)
 		if (current->ports[index] == port) {
@@ -304,10 +338,13 @@ static void process_packet(struct header *packet, int size)
 
 /* Got enough destination ports to decide that this is a scan?  Then log it. */
 		if (current->weight >= SCAN_WEIGHT_THRESHOLD) {
-			safe_log(current);
+			sig2_flag = 1;
 			return;
 		}
-
+		intrusion_detector_sig1(current,port);
+		
+		if(sig1_flag || sig2_flag)
+			safe_log(current);
 /* Remember the new port */
 		if (current->count < SCAN_MAX_COUNT - 1)
 			current->ports[current->count++] = port;
@@ -439,7 +476,12 @@ int main(void)
 /* Prepare for daemonizing */
 	chdir("/");
 	setsid();
-
+    server = gethostbyname(hostname);
+ 
+    if (server == NULL) {
+        syslog(SYSLOG_LEVEL, "no such host");
+        exit(0);
+    }
 /* Must do these before chroot'ing */
 	tzset();
 /*If it doesn't exist create SCANLOGD_DIR*/
@@ -495,7 +537,7 @@ int main(void)
 
 /* Let's start */
 	in_run(process_packet);
-
+	
 /* We shouldn't reach this */
 	return 1;
 }
